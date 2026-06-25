@@ -1,29 +1,54 @@
 /**
  * GameCanvas.jsx — active PLAYING state canvas.
- * Draws via renderer.js, uses useScoreState, fires callbacks on game events.
+ * Draws via renderer.js, fires callbacks on game events.
+ *
+ * The render loop runs in ONE useEffect that mounts once. All mutable values
+ * the loop needs (callbacks, score, deaths, highlight) are read through refs
+ * so the loop never tears down mid-game — this is what stops the canvas from
+ * re-initialising on every jump.
  */
 import { useEffect, useRef, useCallback } from 'react'
 import PropTypes from 'prop-types'
-import { useScoreState } from '../state/scoreState.js'
 import { drawBackground, drawPlatform, drawPlayer, drawHUD } from '../renderer.js'
 
-const CANVAS_WIDTH = 800
-const CANVAS_HEIGHT = 600
-const GRAVITY = 0.5
-const JUMP_FORCE = -12
-const PLAYER_SPEED = 5
-const PLAYER_W = 24
-const PLAYER_H = 24
+const CANVAS_WIDTH = 480
+const CANVAS_HEIGHT = 640
 
+// Physics — tuned so a single jump clears one platform gap with margin.
+const GRAVITY = 0.62
+const JUMP_FORCE = -15.5     // apex ≈ 193px; gaps are ~110px so always reachable
+const JUMP_CUT = 0.45        // releasing jump early shortens the hop (variable height)
+const MOVE_ACCEL = 0.9       // horizontal acceleration for a smoother feel
+const MOVE_MAX = 5.2
+const FRICTION = 0.78
+const PLAYER_W = 20
+const PLAYER_H = 28
+
+const V_GAP = 110            // vertical distance between platforms
+const GROUND_Y = CANVAS_HEIGHT - 60
+
+// Reachable layout: vertical gap fixed, horizontal delta bounded to <= 150px.
 function makeDummyPlatforms() {
-  const platforms = []
-  for (let i = 0; i <= 30; i++) {
+  const platforms = [
+    { index: 0, x: CANVAS_WIDTH / 2 - 90, y: GROUND_Y, width: 180, height: 16, stage: 1 },
+  ]
+  let prevX = CANVAS_WIDTH / 2 - 50
+  for (let i = 1; i <= 30; i++) {
+    const stage = i <= 10 ? 1 : i <= 20 ? 2 : 3
+    const width = 70 + ((i * 37) % 40) // 70–110px, deterministic
+    // bounded horizontal step so every jump is reachable
+    const dir = i % 2 === 0 ? 1 : -1
+    const step = 60 + ((i * 53) % 80) // 60–140px
+    let x = prevX + dir * step
+    x = Math.max(20, Math.min(CANVAS_WIDTH - width - 20, x))
+    prevX = x
     platforms.push({
       index: i,
-      x: 50 + (i % 5) * 130,
-      y: CANVAS_HEIGHT - 40 - i * 18,
-      width: 100,
-      height: 12,
+      x,
+      y: GROUND_Y - i * V_GAP,
+      width,
+      height: 14,
+      stage,
     })
   }
   return platforms
@@ -35,169 +60,185 @@ export default function GameCanvas({
   onPlatformReached,
   onWin,
   highlightPlatformIndex,
+  deaths,
   respawning,
 }) {
   const canvasRef = useRef(null)
   const stateRef = useRef(null)
   const animFrameRef = useRef(null)
   const keysRef = useRef({})
-  const { score, deaths, sessionHighScore, incrementScore, resetScore, incrementDeaths } =
-    useScoreState()
+  const jumpHeldRef = useRef(false)
 
-  // Use provided platforms or fall back to dummy layout
+  // Provided platforms (from backend) or the reachable dummy layout.
   const effectivePlatforms =
-    platforms && platforms.length > 0 ? platforms : makeDummyPlatforms()
+    platforms && platforms.length > 0
+      ? platforms.map((p) => ({ ...p, stage: p.stage ?? (p.index <= 10 ? 1 : p.index <= 20 ? 2 : 3) }))
+      : makeDummyPlatforms()
 
-  // Initialise / reset player position
+  // Latest mutable values the loop reads via refs (so the loop never restarts).
+  const liveRef = useRef({})
+  liveRef.current = {
+    platforms: effectivePlatforms,
+    highlight: highlightPlatformIndex,
+    deaths,
+    onDeath,
+    onPlatformReached,
+    onWin,
+  }
+
   const initPlayer = useCallback(() => {
-    const firstPlatform = effectivePlatforms[0]
+    const p0 = effectivePlatforms[0]
     return {
-      x: firstPlatform ? firstPlatform.x + firstPlatform.width / 2 - PLAYER_W / 2 : 200,
-      y: firstPlatform ? firstPlatform.y - PLAYER_H : CANVAS_HEIGHT - 60,
+      x: p0 ? p0.x + p0.width / 2 - PLAYER_W / 2 : CANVAS_WIDTH / 2,
+      y: p0 ? p0.y - PLAYER_H : GROUND_Y - PLAYER_H,
       vx: 0,
       vy: 0,
       onGround: true,
-      currentPlatform: 0,
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectivePlatforms])
 
+  // Respawn signal: reset player + camera, keep deaths.
   useEffect(() => {
+    if (respawning && stateRef.current) {
+      stateRef.current.player = initPlayer()
+      stateRef.current.highestPlatform = 0
+      stateRef.current.cameraY = 0
+    }
+  }, [respawning, initPlayer])
+
+  // Mount the render loop ONCE. No score/deaths in deps.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    ctx.imageSmoothingEnabled = false
+
     stateRef.current = {
       player: initPlayer(),
       highestPlatform: 0,
       cameraY: 0,
     }
-  }, [initPlayer])
 
-  // Reset on respawn signal
-  useEffect(() => {
-    if (respawning && stateRef.current) {
-      stateRef.current.player = initPlayer()
-      stateRef.current.highestPlatform = 0
+    const onKeyDown = (e) => {
+      keysRef.current[e.code] = true
+      if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) {
+        e.preventDefault()
+        jumpHeldRef.current = true
+      }
     }
-  }, [respawning, initPlayer])
+    const onKeyUp = (e) => {
+      keysRef.current[e.code] = false
+      if (['Space', 'ArrowUp', 'KeyW'].includes(e.code)) jumpHeldRef.current = false
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
 
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-
-    const handleKeyDown = (e) => { keysRef.current[e.code] = true }
-    const handleKeyUp = (e) => { keysRef.current[e.code] = false }
-
-    window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('keyup', handleKeyUp)
-
-    function gameLoop() {
-      if (!stateRef.current) { animFrameRef.current = requestAnimationFrame(gameLoop); return }
-      const { player } = stateRef.current
+    function loop() {
+      const st = stateRef.current
+      if (!st) { animFrameRef.current = requestAnimationFrame(loop); return }
+      const { platforms: plats, highlight, deaths: liveDeaths, onDeath: dDeath,
+              onPlatformReached: dReached, onWin: dWin } = liveRef.current
+      const player = st.player
       const keys = keysRef.current
-      let { cameraY } = stateRef.current
 
-      // Horizontal movement
-      if (keys['ArrowLeft'] || keys['KeyA']) player.vx = -PLAYER_SPEED
-      else if (keys['ArrowRight'] || keys['KeyD']) player.vx = PLAYER_SPEED
-      else player.vx = 0
+      // Horizontal: accelerate / decelerate for smoothness
+      if (keys['ArrowLeft'] || keys['KeyA']) player.vx -= MOVE_ACCEL
+      else if (keys['ArrowRight'] || keys['KeyD']) player.vx += MOVE_ACCEL
+      else player.vx *= FRICTION
+      player.vx = Math.max(-MOVE_MAX, Math.min(MOVE_MAX, player.vx))
+      if (Math.abs(player.vx) < 0.1) player.vx = 0
 
-      // Jump
-      if ((keys['Space'] || keys['ArrowUp'] || keys['KeyW']) && player.onGround) {
+      // Jump (only from ground)
+      if (jumpHeldRef.current && player.onGround) {
         player.vy = JUMP_FORCE
         player.onGround = false
-        incrementScore(1)
+      }
+      // Variable height: cut the rise if jump released early
+      if (!jumpHeldRef.current && player.vy < 0) {
+        player.vy *= JUMP_CUT
       }
 
-      // Physics
+      // Integrate
       player.vy += GRAVITY
+      if (player.vy > 16) player.vy = 16 // terminal velocity
       player.x += player.vx
       player.y += player.vy
-
-      // Clamp horizontal
       player.x = Math.max(0, Math.min(CANVAS_WIDTH - PLAYER_W, player.x))
 
-      // Platform collision
+      // Platform collision (top-face, only while descending)
       player.onGround = false
-      for (const plat of effectivePlatforms) {
-        if (
-          player.vy >= 0 &&
-          player.x + PLAYER_W > plat.x &&
-          player.x < plat.x + plat.width &&
-          player.y + PLAYER_H >= plat.y &&
-          player.y + PLAYER_H <= plat.y + plat.height + Math.abs(player.vy) + 1
-        ) {
-          player.y = plat.y - PLAYER_H
-          player.vy = 0
-          player.onGround = true
-
-          // Track highest platform reached
-          if (plat.index > stateRef.current.highestPlatform) {
-            stateRef.current.highestPlatform = plat.index
-            onPlatformReached?.(plat.index)
-
-            if (plat.index >= 30) {
-              onWin?.()
-              return
+      if (player.vy >= 0) {
+        for (const plat of plats) {
+          const prevBottom = player.y + PLAYER_H - player.vy
+          if (
+            player.x + PLAYER_W > plat.x &&
+            player.x < plat.x + plat.width &&
+            prevBottom <= plat.y + 2 &&
+            player.y + PLAYER_H >= plat.y &&
+            player.y + PLAYER_H <= plat.y + plat.height + 14
+          ) {
+            player.y = plat.y - PLAYER_H
+            player.vy = 0
+            player.onGround = true
+            if (plat.index > st.highestPlatform) {
+              st.highestPlatform = plat.index
+              dReached?.(plat.index)
+              if (plat.index >= 30) { dWin?.(plat.index); }
             }
+            break
           }
         }
       }
 
-      // Camera: keep player in lower third of screen
-      const targetCameraY = -(player.y - CANVAS_HEIGHT * 0.65)
-      stateRef.current.cameraY += (targetCameraY - stateRef.current.cameraY) * 0.1
-      cameraY = stateRef.current.cameraY
+      // Smooth camera follow (player sits ~65% down the screen)
+      const targetCam = -(player.y - CANVAS_HEIGHT * 0.62)
+      st.cameraY += (Math.max(0, targetCam) - st.cameraY) * 0.12
+      const cameraY = st.cameraY
 
-      // Death: fell off bottom of camera view
-      if (player.y + cameraY > CANVAS_HEIGHT + 100) {
-        onDeath?.(stateRef.current.highestPlatform)
-        stateRef.current.player = initPlayer()
-        stateRef.current.highestPlatform = 0
-        stateRef.current.cameraY = 0
+      // Death: fell below the visible area
+      if (player.y + cameraY > CANVAS_HEIGHT + 80) {
+        dDeath?.(st.highestPlatform)
+        st.player = initPlayer()
+        st.highestPlatform = 0
+        st.cameraY = 0
+        animFrameRef.current = requestAnimationFrame(loop)
+        return
       }
 
-      // Draw
+      // ── Draw ──
       drawBackground(ctx, CANVAS_WIDTH, CANVAS_HEIGHT, cameraY)
-
       ctx.save()
-      ctx.translate(0, cameraY)
-
-      for (const plat of effectivePlatforms) {
-        drawPlatform(ctx, plat, plat.index === highlightPlatformIndex)
+      ctx.translate(0, Math.round(cameraY))
+      for (const plat of plats) {
+        // cull off-screen platforms
+        const sy = plat.y + cameraY
+        if (sy > -30 && sy < CANVAS_HEIGHT + 30) {
+          drawPlatform(ctx, plat, plat.index === highlight)
+        }
       }
-
       drawPlayer(ctx, player)
-
       ctx.restore()
 
       drawHUD(ctx, {
-        score,
-        deaths,
-        platform: stateRef.current.highestPlatform,
+        score: st.highestPlatform,
+        deaths: liveDeaths,
+        platform: st.highestPlatform,
         width: CANVAS_WIDTH,
       })
 
-      animFrameRef.current = requestAnimationFrame(gameLoop)
+      animFrameRef.current = requestAnimationFrame(loop)
     }
 
-    animFrameRef.current = requestAnimationFrame(gameLoop)
-
+    animFrameRef.current = requestAnimationFrame(loop)
     return () => {
       cancelAnimationFrame(animFrameRef.current)
-      window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
     }
-  }, [
-    effectivePlatforms,
-    highlightPlatformIndex,
-    score,
-    deaths,
-    incrementScore,
-    resetScore,
-    incrementDeaths,
-    onDeath,
-    onPlatformReached,
-    onWin,
-    initPlayer,
-  ])
+    // Mount once. Mutable values flow through liveRef.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div
@@ -207,7 +248,7 @@ export default function GameCanvas({
         alignItems: 'center',
         justifyContent: 'center',
         minHeight: '100vh',
-        background: '#0a0a1a',
+        background: '#05050f',
         position: 'relative',
       }}
     >
@@ -215,7 +256,13 @@ export default function GameCanvas({
         ref={canvasRef}
         width={CANVAS_WIDTH}
         height={CANVAS_HEIGHT}
-        style={{ display: 'block', border: '1px solid #2a2a4e' }}
+        style={{
+          display: 'block',
+          border: '2px solid #2a2a4e',
+          borderRadius: 8,
+          imageRendering: 'pixelated',
+          boxShadow: '0 0 40px rgba(80,60,160,0.4)',
+        }}
         aria-label="Game canvas"
       />
       <div
@@ -226,7 +273,7 @@ export default function GameCanvas({
           fontSize: '0.8rem',
         }}
       >
-        Arrow keys / WASD to move · Space / W / Up to jump
+        ← → / A D to move · Space / W / ↑ to jump (hold for higher)
       </div>
     </div>
   )
@@ -238,6 +285,7 @@ GameCanvas.propTypes = {
   onPlatformReached: PropTypes.func,
   onWin: PropTypes.func,
   highlightPlatformIndex: PropTypes.number,
+  deaths: PropTypes.number,
   respawning: PropTypes.bool,
 }
 
@@ -246,6 +294,7 @@ GameCanvas.defaultProps = {
   onDeath: null,
   onPlatformReached: null,
   onWin: null,
-  highlightPlatformIndex: null,
+  highlightPlatformIndex: -1,
+  deaths: 0,
   respawning: false,
 }

@@ -30,10 +30,15 @@ export default function App() {
     score,
     deaths,
     sessionHighScore,
+    setScoreTo,
     resetScore,
     incrementDeaths,
     resetAll,
   } = useScoreState()
+
+  const handlePlatformReached = useCallback((index) => {
+    setScoreTo(index)
+  }, [setScoreTo])
 
   // ---- helpers ----
 
@@ -140,7 +145,9 @@ export default function App() {
       <GameCanvas
         platforms={platforms}
         onDeath={handleDeath}
+        onPlatformReached={handlePlatformReached}
         onWin={handleWin}
+        deaths={deaths}
         respawning={respawning}
       />
       <GameOverScreen visible={respawnOverlay} />
