@@ -87,7 +87,7 @@ export default function GameCanvas({
   }
 
   const initPlayer = useCallback(() => {
-    const p0 = effectivePlatforms[0]
+    const p0 = liveRef.current.platforms[0]
     return {
       x: p0 ? p0.x + p0.width / 2 - PLAYER_W / 2 : CANVAS_WIDTH / 2,
       y: p0 ? p0.y - PLAYER_H : GROUND_Y - PLAYER_H,
@@ -95,17 +95,22 @@ export default function GameCanvas({
       vy: 0,
       onGround: true,
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectivePlatforms])
+  }, [])
 
-  // Respawn signal: reset player + camera, keep deaths.
+  // Keep a stable ref to the latest initPlayer for the loop + respawn edge.
+  const initPlayerRef = useRef(initPlayer)
+  initPlayerRef.current = initPlayer
+
+  // Respawn: reset ONCE on the rising edge of `respawning` (not every render).
+  const prevRespawningRef = useRef(false)
   useEffect(() => {
-    if (respawning && stateRef.current) {
-      stateRef.current.player = initPlayer()
+    if (respawning && !prevRespawningRef.current && stateRef.current) {
+      stateRef.current.player = initPlayerRef.current()
       stateRef.current.highestPlatform = 0
       stateRef.current.cameraY = 0
     }
-  }, [respawning, initPlayer])
+    prevRespawningRef.current = respawning
+  }, [respawning])
 
   // Mount the render loop ONCE. No score/deaths in deps.
   useEffect(() => {
