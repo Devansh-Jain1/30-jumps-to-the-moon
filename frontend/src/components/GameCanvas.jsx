@@ -65,6 +65,7 @@ export default function GameCanvas({
     stateRef.current = {
       player: initPlayer(),
       highestPlatform: 0,
+      cameraY: 0,
     }
   }, [initPlayer])
 
@@ -91,6 +92,7 @@ export default function GameCanvas({
       if (!stateRef.current) { animFrameRef.current = requestAnimationFrame(gameLoop); return }
       const { player } = stateRef.current
       const keys = keysRef.current
+      let { cameraY } = stateRef.current
 
       // Horizontal movement
       if (keys['ArrowLeft'] || keys['KeyA']) player.vx = -PLAYER_SPEED
@@ -139,21 +141,32 @@ export default function GameCanvas({
         }
       }
 
-      // Death: fell off bottom
-      if (player.y > CANVAS_HEIGHT + 50) {
+      // Camera: keep player in lower third of screen
+      const targetCameraY = -(player.y - CANVAS_HEIGHT * 0.65)
+      stateRef.current.cameraY += (targetCameraY - stateRef.current.cameraY) * 0.1
+      cameraY = stateRef.current.cameraY
+
+      // Death: fell off bottom of camera view
+      if (player.y + cameraY > CANVAS_HEIGHT + 100) {
         onDeath?.(stateRef.current.highestPlatform)
         stateRef.current.player = initPlayer()
         stateRef.current.highestPlatform = 0
+        stateRef.current.cameraY = 0
       }
 
       // Draw
-      drawBackground(ctx, CANVAS_WIDTH, CANVAS_HEIGHT)
+      drawBackground(ctx, CANVAS_WIDTH, CANVAS_HEIGHT, cameraY)
+
+      ctx.save()
+      ctx.translate(0, cameraY)
 
       for (const plat of effectivePlatforms) {
         drawPlatform(ctx, plat, plat.index === highlightPlatformIndex)
       }
 
       drawPlayer(ctx, player)
+
+      ctx.restore()
 
       drawHUD(ctx, {
         score,
