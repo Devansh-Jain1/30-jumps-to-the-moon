@@ -1,0 +1,18 @@
+#!/bin/sh
+# Maven Wrapper script
+# ----------------------------------------------------------------------------
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements. See the NOTICE file distributed with this
+# work for additional information regarding copyright ownership.
+# ----------------------------------------------------------------------------
+
+# Determine the project base directory
+MAVEN_PROJECTBASEDIR="${MAVEN_BASEDIR:-$(pwd)}"
+BASEDIR="$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")"
+
+# Fall back to system mvn if wrapper jar is not present
+if [ -f "$BASEDIR/.mvn/wrapper/maven-wrapper.jar" ]; then
+    exec java -jar "$BASEDIR/.mvn/wrapper/maven-wrapper.jar" "$@"
+else
+    exec mvn "$@"
+fi

@@ -1,0 +1,29 @@
+# Node / Frontend
+node_modules/
+dist/
+.DS_Store
+*.local
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Maven / Backend
+target/
+*.class
+*.jar
+*.war
+*.ear
+.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
