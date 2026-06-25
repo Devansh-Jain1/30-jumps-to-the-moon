@@ -17,6 +17,16 @@ export function useScoreState() {
     setScore(scoreRef.current)
   }, [])
 
+  // Set score to an absolute value (used when score == highest platform reached).
+  const setScoreTo = useCallback((value) => {
+    scoreRef.current = value
+    setScore(value)
+    if (value > highRef.current) {
+      highRef.current = value
+      setSessionHighScore(value)
+    }
+  }, [])
+
   const resetScore = useCallback(() => {
     if (scoreRef.current > highRef.current) {
       highRef.current = scoreRef.current
@@ -45,6 +55,7 @@ export function useScoreState() {
     deaths,
     sessionHighScore,
     incrementScore,
+    setScoreTo,
     resetScore,
     incrementDeaths,
     resetAll,
