@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.3.0] - 2026-06-25
+
+### Added
+- REST API endpoints (issue #3)
+- `WinRecord` record: playerName, score, deathCount, timestamp
+- `GameStateResponse` record: seed + platform list
+- `GameService`: newGame(), saveWin(), getTopTen() (top 10 sorted by deathCount asc then score desc)
+- `GameController`: POST /api/game/start, POST /api/game/death, POST /api/game/win, GET /api/game/highscores
+- MockMvc tests for all 4 endpoints
+
+## [v0.2.0] - 2026-06-25
+
+### Added
+- Platform generation (issue #2)
+- `Platform` record: index, x, y, width, stage
+- `PlatformGenerator` service: deterministic generation of 30 platforms from a seed
+- Stage assignment: platforms 1-10 = stage 1, 11-20 = stage 2, 21-30 = stage 3
+- Y strictly ascending at 18px increments from 550.0; horizontal gaps constrained to ≤200px
+- 4 unit tests: count, stage assignment, seed determinism, ascending Y
+
 ## [v0.8.0] - 2026-06-25
 
 ### Added
