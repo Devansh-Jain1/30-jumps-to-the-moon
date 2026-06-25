@@ -73,7 +73,7 @@ export default function App() {
       if (highestPlatform < 5) {
         // Early death — just reset position in-place, no API call
         dispatch({ type: 'PLAYER_DIED_EARLY' })
-        // RESPAWN_DONE dispatched automatically after overlay
+        showRespawnOverlay() // schedules RESPAWN_DONE so respawning clears
         return
       }
 
